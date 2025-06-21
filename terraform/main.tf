@@ -3,6 +3,10 @@ data "vault_generic_secret" "rds" {
   path = "secret/rds"
 }
 
+data "vault_generic_secret" "redshift" {
+  path = "secret/redshift"
+}
+
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
@@ -24,6 +28,84 @@ module "rds_sg" {
     {
       from_port       = 5432
       to_port         = 5432
+      protocol        = "tcp"
+      self            = "false"
+      cidr_blocks     = ["0.0.0.0/0"]
+      security_groups = []
+      description     = "any"
+    }
+  ]
+  egress = [
+    {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+# Redshift Security Group
+module "redshift_sg" {
+  source = "./modules/vpc/security_groups"
+  vpc_id = module.vpc.vpc_id
+  name   = "redshift-sg"
+  ingress = [
+    {
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      self            = "false"
+      cidr_blocks     = ["0.0.0.0/0"]
+      security_groups = []
+      description     = "any"
+    }
+  ]
+  egress = [
+    {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+# Airflow Load Balancer Security Group
+module "airflow_lb_sg" {
+  source = "./modules/vpc/security_groups"
+  vpc_id = module.vpc.vpc_id
+  name   = "airflow-lb-sg"
+  ingress = [
+    {
+      from_port       = 80
+      to_port         = 80
+      protocol        = "tcp"
+      self            = "false"
+      cidr_blocks     = ["0.0.0.0/0"]
+      security_groups = []
+      description     = "any"
+    }
+  ]
+  egress = [
+    {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+# EMR Security Group
+module "emr_sg" {
+  source = "./modules/vpc/security_groups"
+  vpc_id = module.vpc.vpc_id
+  name   = "emr-sg"
+  ingress = [
+    {
+      from_port       = 0
+      to_port         = 0
       protocol        = "tcp"
       self            = "false"
       cidr_blocks     = ["0.0.0.0/0"]
@@ -126,20 +208,21 @@ module "db_credentials" {
 # -----------------------------------------------------------------------------------------
 # RDS Instance
 # -----------------------------------------------------------------------------------------
+
 module "source_db" {
-  source                          = "./modules/rds"
-  db_name                         = "cdcsourcedb"
-  allocated_storage               = 100
-  engine                          = "postgres"
-  engine_version                  = "17.2"
-  instance_class                  = "db.t4g.large"
-  multi_az                        = true
-  username                        = tostring(data.vault_generic_secret.rds.data["username"])
-  password                        = tostring(data.vault_generic_secret.rds.data["password"])
-  subnet_group_name               = "cdc-rds-subnet-group"
-  backup_retention_period         = 7
-  backup_window                   = "03:00-06:00"
-  maintenance_window              = "Mon:00:00-Mon:03:00"
+  source                  = "./modules/rds"
+  db_name                 = "cdcsourcedb"
+  allocated_storage       = 100
+  engine                  = "postgres"
+  engine_version          = "17.2"
+  instance_class          = "db.t4g.large"
+  multi_az                = true
+  username                = tostring(data.vault_generic_secret.rds.data["username"])
+  password                = tostring(data.vault_generic_secret.rds.data["password"])
+  subnet_group_name       = "cdc-rds-subnet-group"
+  backup_retention_period = 7
+  backup_window           = "03:00-06:00"
+  maintenance_window      = "Mon:00:00-Mon:03:00"
   subnet_group_ids = [
     module.private_subnets.subnets[0].id,
     module.private_subnets.subnets[1].id,
@@ -154,7 +237,7 @@ module "source_db" {
   performance_insights_retention_period = 7
   parameter_group_name                  = "cdc-postgres17-params"
   parameter_group_family                = "postgres17"
-  parameters = []
+  parameters                            = []
 }
 
 # -----------------------------------------------------------------------------------------
@@ -247,23 +330,58 @@ module "gold_bucket" {
 
 module "redshift_serverless" {
   source              = "./modules/redshift"
-  namespace_name      = "invoice-processing-namespace"
-  admin_username      = "admin"
-  admin_user_password = "AdminPassword123!"
-  db_name             = "invoice_db"
+  namespace_name      = "warehouse-namespace"
+  admin_username      = tostring(data.vault_generic_secret.redshift.data["username"])
+  admin_user_password = tostring(data.vault_generic_secret.redshift.data["password"])
+  db_name             = "processed_records"
   workgroups = [
     {
-      workgroup_name      = "invoice-processing-workgroup"
+      workgroup_name      = "warehouse-workgroup"
       base_capacity       = 128
       publicly_accessible = false
       subnet_ids          = module.private_subnets.subnets[*].id
-      security_group_ids  = [module.redshift_security_group.id]
+      security_group_ids  = [module.redshift_sg.id]
       config_parameters = [
         {
           parameter_key   = "enable_user_activity_logging"
           parameter_value = "true"
         }
       ]
+    }
+  ]
+}
+
+# -----------------------------------------------------------------------------------------
+# EMR Serverless Configuration
+# -----------------------------------------------------------------------------------------
+module "emr_serverless" {
+  source                         = "./modules/emr"
+  name                           = "cdc-emr-serverless"
+  release_label                  = "emr-7.0.0"
+  type                           = "Spark"
+  maximum_cpu                    = "100 vCPU"
+  maximum_memory                 = "500 GB"
+  subnet_ids                     = module.private_subnets.subnets[*].id
+  security_group_ids             = [module.emr_sg.id]
+  auto_start_enabled             = true
+  auto_stop_enabled              = true
+  auto_stop_idle_timeout_minutes = 30
+  initial_capacity = [
+    {
+      initial_capacity_type = "Driver"
+      worker_count          = 1
+      worker_configuration = {
+        cpu    = "4 vCPU"
+        memory = "16 GB"
+      }
+    },
+    {
+      initial_capacity_type = "Executor"
+      worker_count          = 5
+      worker_configuration = {
+        cpu    = "8 vCPU"
+        memory = "32 GB"
+      }
     }
   ]
 }
@@ -286,46 +404,46 @@ module "airflow_launch_template" {
   network_interfaces = [
     {
       associate_public_ip_address = true
-      security_groups             = [module.carshub_asg_frontend_sg.id]
+      security_groups             = [module.airflow_lb_sg.id]
     }
   ]
-  user_data = base64encode(templatefile("${path.module}/../../scripts/airflow_installation.sh", {}))
+  user_data = base64encode(templatefile("${path.module}/scripts/airflow_installation.sh", {}))
 }
 
 # Auto Scaling Group for Airflow Template
 module "airflow__asg" {
   source                    = "./modules/auto_scaling_group"
-  name                      = "carshub_frontend_asg_${var.env}"
+  name                      = "airflow-asg"
   min_size                  = 3
   max_size                  = 50
   desired_capacity          = 3
   health_check_grace_period = 300
   health_check_type         = "ELB"
   force_delete              = true
-  target_group_arns         = [module.carshub_frontend_lb.target_groups[0].arn]
-  vpc_zone_identifier       = module.carshub_private_subnets.subnets[*].id
-  launch_template_id        = module.carshub_frontend_launch_template.id
+  target_group_arns         = [module.airflow_lb.target_groups[0].arn]
+  vpc_zone_identifier       = module.private_subnets.subnets[*].id
+  launch_template_id        = module.airflow_launch_template.id
   launch_template_version   = "$Latest"
 }
 
 # Frontend Load Balancer
-module "carshub_frontend_lb" {
-  source                     = "../../../modules/load-balancer"
-  lb_name                    = "carshub-frontend-lb-${var.env}"
+module "airflow_lb" {
+  source                     = "./modules/load-balancer"
+  lb_name                    = "airflow-lb"
   lb_is_internal             = false
   lb_ip_address_type         = "ipv4"
   load_balancer_type         = "application"
   enable_deletion_protection = true
-  security_groups            = [module.carshub_frontend_lb_sg.id]
-  subnets                    = module.carshub_public_subnets.subnets[*].id
+  security_groups            = [module.airflow_lb_sg.id]
+  subnets                    = module.public_subnets.subnets[*].id
   target_groups = [
     {
-      target_group_name      = "carshub-frontend-tg-${var.env}"
-      target_port            = 80
+      target_group_name      = "airflow-tg"
+      target_port            = 8080
       target_ip_address_type = "ipv4"
       target_protocol        = "HTTP"
       target_type            = "instance"
-      target_vpc_id          = module.carshub_vpc.vpc_id
+      target_vpc_id          = module.vpc.vpc_id
 
       health_check_interval            = 30
       health_check_path                = "/auth/signin"
@@ -334,7 +452,7 @@ module "carshub_frontend_lb" {
       health_check_timeout             = 5
       health_check_healthy_threshold   = 3
       health_check_unhealthy_threshold = 3
-      health_check_port                = 80
+      health_check_port                = 8080
     }
   ]
   listeners = [
@@ -344,7 +462,7 @@ module "carshub_frontend_lb" {
       default_actions = [
         {
           type             = "forward"
-          target_group_arn = module.carshub_frontend_lb.target_groups[0].arn
+          target_group_arn = module.airflow_lb.target_groups[0].arn
         }
       ]
     }
