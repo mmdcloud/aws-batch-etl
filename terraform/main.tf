@@ -52,8 +52,8 @@ module "redshift_sg" {
   name   = "redshift-sg"
   ingress = [
     {
-      from_port       = 5432
-      to_port         = 5432
+      from_port       = 5439
+      to_port         = 5439
       protocol        = "tcp"
       self            = "false"
       cidr_blocks     = ["0.0.0.0/0"]
@@ -78,8 +78,8 @@ module "airflow_lb_sg" {
   name   = "airflow-lb-sg"
   ingress = [
     {
-      from_port       = 80
-      to_port         = 80
+      from_port       = 8080
+      to_port         = 8080
       protocol        = "tcp"
       self            = "false"
       cidr_blocks     = ["0.0.0.0/0"]
@@ -224,12 +224,12 @@ module "source_db" {
   backup_window           = "03:00-06:00"
   maintenance_window      = "Mon:00:00-Mon:03:00"
   subnet_group_ids = [
-    module.private_subnets.subnets[0].id,
-    module.private_subnets.subnets[1].id,
-    module.private_subnets.subnets[2].id
+    module.public_subnets.subnets[0].id,
+    module.public_subnets.subnets[1].id,
+    module.public_subnets.subnets[2].id
   ]
   vpc_security_group_ids                = [module.rds_sg.id]
-  publicly_accessible                   = false
+  publicly_accessible                   = true
   deletion_protection                   = false
   skip_final_snapshot                   = true
   max_allocated_storage                 = 500
@@ -245,7 +245,7 @@ module "source_db" {
 # -----------------------------------------------------------------------------------------
 module "silver_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "silverbucketetl"
+  bucket_name        = "silverbucketetletlpro"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -272,7 +272,7 @@ module "silver_bucket" {
 
 module "bronze_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "bronzebucketetl"
+  bucket_name        = "bronzebucketetletlpro"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -299,7 +299,7 @@ module "bronze_bucket" {
 
 module "gold_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "bronzebucketetl"
+  bucket_name        = "bronzebucketetletlpro"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -327,7 +327,6 @@ module "gold_bucket" {
 # -----------------------------------------------------------------------------------------
 # Redshift Configuration
 # -----------------------------------------------------------------------------------------
-
 module "redshift_serverless" {
   source              = "./modules/redshift"
   namespace_name      = "warehouse-namespace"
@@ -339,7 +338,7 @@ module "redshift_serverless" {
       workgroup_name      = "warehouse-workgroup"
       base_capacity       = 128
       publicly_accessible = false
-      subnet_ids          = module.private_subnets.subnets[*].id
+      subnet_ids          = module.public_subnets.subnets[*].id
       security_group_ids  = [module.redshift_sg.id]
       config_parameters = [
         {
@@ -361,7 +360,7 @@ module "emr_serverless" {
   type                           = "Spark"
   maximum_cpu                    = "100 vCPU"
   maximum_memory                 = "500 GB"
-  subnet_ids                     = module.private_subnets.subnets[*].id
+  subnet_ids                     = module.public_subnets.subnets[*].id
   security_group_ids             = [module.emr_sg.id]
   auto_start_enabled             = true
   auto_stop_enabled              = true
@@ -389,7 +388,6 @@ module "emr_serverless" {
 # -----------------------------------------------------------------------------------------
 # Airflow Configuration
 # -----------------------------------------------------------------------------------------
-
 # Launch Template for Airflow
 module "airflow_launch_template" {
   source                               = "./modules/launch_template"
@@ -399,8 +397,8 @@ module "airflow_launch_template" {
   image_id                             = "ami-005fc0f236362e99f"
   instance_type                        = "t2.micro"
   instance_initiated_shutdown_behavior = "stop"
-  instance_profile_name                = aws_iam_instance_profile.iam_instance_profile.name
-  key_name                             = "madmaxkeypair"
+  # instance_profile_name                = aws_iam_instance_profile.iam_instance_profile.name
+  key_name = "madmaxkeypair"
   network_interfaces = [
     {
       associate_public_ip_address = true
@@ -433,7 +431,7 @@ module "airflow_lb" {
   lb_is_internal             = false
   lb_ip_address_type         = "ipv4"
   load_balancer_type         = "application"
-  enable_deletion_protection = true
+  enable_deletion_protection = false
   security_groups            = [module.airflow_lb_sg.id]
   subnets                    = module.public_subnets.subnets[*].id
   target_groups = [

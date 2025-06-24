@@ -5,9 +5,9 @@ resource "aws_launch_template" "template" {
   instance_type = var.instance_type
   key_name      = var.key_name
   ebs_optimized = var.ebs_optimized
-  iam_instance_profile {
-    name = var.instance_profile_name
-  }
+  # iam_instance_profile {
+  #   name = var.instance_profile_name
+  # }
   instance_initiated_shutdown_behavior = var.instance_initiated_shutdown_behavior
   dynamic "network_interfaces" {
     for_each = var.network_interfaces
