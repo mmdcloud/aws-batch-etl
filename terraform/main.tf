@@ -1,4 +1,6 @@
+# -----------------------------------------------------------------------------------------
 # Registering vault provider
+# -----------------------------------------------------------------------------------------
 data "vault_generic_secret" "rds" {
   path = "secret/rds"
 }
@@ -11,184 +13,103 @@ data "vault_generic_secret" "redshift" {
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
 module "vpc" {
-  source                = "./modules/vpc/vpc"
-  vpc_name              = "cdc-vpc"
-  vpc_cidr_block        = "10.0.0.0/16"
-  enable_dns_hostnames  = true
-  enable_dns_support    = true
-  internet_gateway_name = "cdc-vpc-igw"
-}
-
-# RDS Security Group
-module "rds_sg" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
-  name   = "rds-sg"
-  ingress = [
-    {
-      from_port       = 5432
-      to_port         = 5432
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Redshift Security Group
-module "redshift_sg" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
-  name   = "redshift-sg"
-  ingress = [
-    {
-      from_port       = 5439
-      to_port         = 5439
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Airflow Load Balancer Security Group
-module "airflow_lb_sg" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
-  name   = "airflow-lb-sg"
-  ingress = [
-    {
-      from_port       = 8080
-      to_port         = 8080
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# EMR Security Group
-module "emr_sg" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
-  name   = "emr-sg"
-  ingress = [
-    {
-      from_port       = 0
-      to_port         = 0
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Public Subnets
-module "public_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "public-subnet"
-  subnets = [
-    {
-      subnet = "10.0.1.0/24"
-      az     = "us-east-1a"
-    },
-    {
-      subnet = "10.0.2.0/24"
-      az     = "us-east-1b"
-    },
-    {
-      subnet = "10.0.3.0/24"
-      az     = "us-east-1c"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
+  source                  = "./modules/vpc"
+  vpc_name                = "vpc"
+  vpc_cidr                = "10.0.0.0/16"
+  azs                     = var.azs
+  public_subnets          = var.public_subnets
+  private_subnets         = var.private_subnets
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  create_igw              = true
   map_public_ip_on_launch = true
+  enable_nat_gateway      = true
+  single_nat_gateway      = false
+  one_nat_gateway_per_az  = true
+  tags = {
+    Project = "batch-etl"
+  }
 }
 
-# Private Subnets
-module "private_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "private-subnet"
-  subnets = [
-    {
-      subnet = "10.0.6.0/24"
-      az     = "us-east-1a"
-    },
-    {
-      subnet = "10.0.5.0/24"
-      az     = "us-east-1b"
-    },
-    {
-      subnet = "10.0.4.0/24"
-      az     = "us-east-1c"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
-  map_public_ip_on_launch = false
-}
-
-# Public Route Table
-module "public_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "public-route-table"
-  subnets = module.public_subnets.subnets[*]
-  routes = [
-    {
-      cidr_block     = "0.0.0.0/0"
-      gateway_id     = module.vpc.igw_id
-      nat_gateway_id = ""
-    }
-  ]
+module "rds_sg" {
+  source = "./modules/security-groups"
+  name   = "rds-sg"
   vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "RDS Traffic"
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "rds-sg"
+  }
 }
 
-# Private Route Table
-module "private_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "private-route-table"
-  subnets = module.private_subnets.subnets[*]
-  routes  = []
-  vpc_id  = module.vpc.vpc_id
+module "redshift_sg" {
+  source = "./modules/security-groups"
+  name   = "rds-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "Redshift Traffic"
+      from_port   = 5439
+      to_port     = 5439
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "rds-sg"
+  }
+}
+
+module "emr_sg" {
+  source = "./modules/security-groups"
+  name   = "emr-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "EMR Traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "emr-sg"
+  }
 }
 
 # -----------------------------------------------------------------------------------------
@@ -208,7 +129,6 @@ module "db_credentials" {
 # -----------------------------------------------------------------------------------------
 # RDS Instance
 # -----------------------------------------------------------------------------------------
-
 module "source_db" {
   source                  = "./modules/rds"
   db_name                 = "cdcsourcedb"
@@ -224,9 +144,9 @@ module "source_db" {
   backup_window           = "03:00-06:00"
   maintenance_window      = "Mon:00:00-Mon:03:00"
   subnet_group_ids = [
-    module.public_subnets.subnets[0].id,
-    module.public_subnets.subnets[1].id,
-    module.public_subnets.subnets[2].id
+    module.vpc.public_subnets[0],
+    module.vpc.public_subnets[1],
+    module.vpc.public_subnets[2]
   ]
   vpc_security_group_ids                = [module.rds_sg.id]
   publicly_accessible                   = true
@@ -338,7 +258,7 @@ module "redshift_serverless" {
       workgroup_name      = "warehouse-workgroup"
       base_capacity       = 128
       publicly_accessible = false
-      subnet_ids          = module.public_subnets.subnets[*].id
+      subnet_ids          = module.vpc.public_subnets
       security_group_ids  = [module.redshift_sg.id]
       config_parameters = [
         {
@@ -360,7 +280,7 @@ module "emr_serverless" {
   type                           = "Spark"
   maximum_cpu                    = "100 vCPU"
   maximum_memory                 = "500 GB"
-  subnet_ids                     = module.public_subnets.subnets[*].id
+  subnet_ids                     = module.vpc.public_subnets
   security_group_ids             = [module.emr_sg.id]
   auto_start_enabled             = true
   auto_stop_enabled              = true
@@ -388,81 +308,3 @@ module "emr_serverless" {
 # -----------------------------------------------------------------------------------------
 # Airflow Configuration
 # -----------------------------------------------------------------------------------------
-# Launch Template for Airflow
-module "airflow_launch_template" {
-  source                               = "./modules/launch_template"
-  name                                 = "airflow_launch_template"
-  description                          = "airflow_launch_template"
-  ebs_optimized                        = false
-  image_id                             = "ami-005fc0f236362e99f"
-  instance_type                        = "t2.micro"
-  instance_initiated_shutdown_behavior = "stop"
-  # instance_profile_name                = aws_iam_instance_profile.iam_instance_profile.name
-  key_name = "madmaxkeypair"
-  network_interfaces = [
-    {
-      associate_public_ip_address = true
-      security_groups             = [module.airflow_lb_sg.id]
-    }
-  ]
-  user_data = base64encode(templatefile("${path.module}/scripts/airflow_installation.sh", {}))
-}
-
-# Auto Scaling Group for Airflow Template
-module "airflow__asg" {
-  source                    = "./modules/auto_scaling_group"
-  name                      = "airflow-asg"
-  min_size                  = 3
-  max_size                  = 50
-  desired_capacity          = 3
-  health_check_grace_period = 300
-  health_check_type         = "ELB"
-  force_delete              = true
-  target_group_arns         = [module.airflow_lb.target_groups[0].arn]
-  vpc_zone_identifier       = module.private_subnets.subnets[*].id
-  launch_template_id        = module.airflow_launch_template.id
-  launch_template_version   = "$Latest"
-}
-
-# Frontend Load Balancer
-module "airflow_lb" {
-  source                     = "./modules/load-balancer"
-  lb_name                    = "airflow-lb"
-  lb_is_internal             = false
-  lb_ip_address_type         = "ipv4"
-  load_balancer_type         = "application"
-  enable_deletion_protection = false
-  security_groups            = [module.airflow_lb_sg.id]
-  subnets                    = module.public_subnets.subnets[*].id
-  target_groups = [
-    {
-      target_group_name      = "airflow-tg"
-      target_port            = 8080
-      target_ip_address_type = "ipv4"
-      target_protocol        = "HTTP"
-      target_type            = "instance"
-      target_vpc_id          = module.vpc.vpc_id
-
-      health_check_interval            = 30
-      health_check_path                = "/auth/signin"
-      health_check_enabled             = true
-      health_check_protocol            = "HTTP"
-      health_check_timeout             = 5
-      health_check_healthy_threshold   = 3
-      health_check_unhealthy_threshold = 3
-      health_check_port                = 8080
-    }
-  ]
-  listeners = [
-    {
-      listener_port     = 80
-      listener_protocol = "HTTP"
-      default_actions = [
-        {
-          type             = "forward"
-          target_group_arn = module.airflow_lb.target_groups[0].arn
-        }
-      ]
-    }
-  ]
-}
