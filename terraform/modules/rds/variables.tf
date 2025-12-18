@@ -6,9 +6,11 @@ variable "publicly_accessible" {}
 variable "multi_az" {}
 variable "instance_class" {}
 variable "username" {}
+variable "storage_encrypted" {}
 variable "password" {}
 variable "parameter_group_name" {}
 variable "parameter_group_family" {}
+variable "maintenance_window" {}
 variable "parameters" {
   type = list(object({
     name  = string
@@ -16,6 +18,7 @@ variable "parameters" {
   }))
 }
 variable "skip_final_snapshot" {}
+variable "storage_type" {}
 variable "subnet_group_name" {}
 variable "subnet_group_ids" {}
 variable "vpc_security_group_ids" {}
@@ -25,10 +28,11 @@ variable "deletion_protection" {}
 variable "max_allocated_storage"{}
 variable "performance_insights_enabled"{}
 variable "performance_insights_retention_period"{}
+variable "monitoring_interval"{}
 variable "enabled_cloudwatch_logs_exports" {
   type = list(string)
   default = []
 }
-variable "maintenance_window" {
-  
+variable "monitoring_role_arn" {
+  type = string
 }

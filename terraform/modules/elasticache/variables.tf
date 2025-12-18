@@ -1,0 +1,29 @@
+variable "engine" {}
+variable "node_type" {}
+variable "num_cache_clusters" {}
+variable "parameter_group_name" {}
+variable "engine_version" {}
+variable "port" {}
+variable "subnet_group_name" {}
+variable "subnet_group_ids" {}
+variable "vpc_security_group_ids" {}
+variable "maintenance_window" {}
+variable "automatic_failover_enabled" {}
+variable "replication_group_id" {}
+variable "description" {}
+variable "log_delivery_configuration" {
+  type = list(object({
+    log_type         = string
+    log_format       = string
+    destination      = string
+    destination_type = string
+  }))
+  default = []
+}
+variable "multi_az_enabled" {}
+variable "snapshot_retention_limit" {}
+variable "snapshot_window" {}
+variable "at_rest_encryption_enabled" {}
+variable "transit_encryption_enabled" {}
+variable "auth_token_enabled" {}
+variable "auth_token" {}
