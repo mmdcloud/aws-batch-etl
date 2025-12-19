@@ -5,12 +5,20 @@ data "vault_generic_secret" "rds" {
   path = "secret/rds"
 }
 
+data "vault_generic_secret" "redis" {
+  path = "secret/redis"
+}
+
 data "vault_generic_secret" "airflow_metadata_db" {
   path = "secret/airflow_metadata_db"
 }
 
 data "vault_generic_secret" "redshift" {
   path = "secret/redshift"
+}
+
+resource "random_id" "id" {
+  byte_length = 8
 }
 
 # -----------------------------------------------------------------------------------------
@@ -41,11 +49,12 @@ module "rds_sg" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description = "RDS Traffic"
-      from_port   = 5432
-      to_port     = 5432
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+      description     = "RDS Traffic"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -64,15 +73,16 @@ module "rds_sg" {
 
 module "redshift_sg" {
   source = "./modules/security-groups"
-  name   = "rds-sg"
+  name   = "redshift-sg"
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description = "Redshift Traffic"
-      from_port   = 5439
-      to_port     = 5439
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+      description     = "Redshift Traffic"
+      from_port       = 5439
+      to_port         = 5439
+      protocol        = "tcp"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -95,11 +105,12 @@ module "emr_sg" {
   vpc_id = module.vpc.vpc_id
   ingress_rules = [
     {
-      description = "EMR Traffic"
-      from_port   = 0
-      to_port     = 0
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+      description     = "EMR Traffic"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "tcp"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
     }
   ]
   egress_rules = [
@@ -113,6 +124,204 @@ module "emr_sg" {
   ]
   tags = {
     Name = "emr-sg"
+  }
+}
+
+module "airflow_scheduler_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-scheduler-sg"
+  vpc_id = module.vpc.vpc_id
+  egress_rules = [
+    {
+      description     = "Allow all outbound traffic"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-scheduler-sg"
+  }
+}
+
+module "airflow_worker_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-worker-sg"
+  vpc_id = module.vpc.vpc_id
+  egress_rules = [
+    {
+      description     = "Allow all outbound traffic"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-worker-sg"
+  }
+}
+
+module "airflow_webserver_lb_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-webserver-lb-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description     = "HTTP Traffic"
+      from_port       = 80
+      to_port         = 80
+      protocol        = "tcp"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
+    },
+    {
+      description     = "HTTPS Traffic"
+      from_port       = 443
+      to_port         = 443
+      protocol        = "tcp"
+      security_groups = []
+      cidr_blocks     = ["0.0.0.0/0"]
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-webserver-lb-sg"
+  }
+}
+
+module "airflow_webserver_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-webserver-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description     = "HTTP Traffic"
+      from_port       = 8080
+      to_port         = 8080
+      protocol        = "tcp"
+      security_groups = [module.airflow_webserver_lb_sg.id]
+      cidr_blocks     = []
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-webserver-sg"
+  }
+}
+
+module "airflow_rds_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-rds-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "PostgreSQL from Airflow components"
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      security_groups = [
+        module.airflow_webserver_sg.id,
+        module.airflow_scheduler_sg.id,
+        module.airflow_worker_sg.id
+      ]
+      cidr_blocks = []
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-rds-sg"
+  }
+}
+
+module "airflow_redis_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-redis-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "Redis from Airflow components"
+      from_port   = 6379
+      to_port     = 6379
+      protocol    = "tcp"
+      security_groups = [
+        module.airflow_webserver_sg.id,
+        module.airflow_scheduler_sg.id,
+        module.airflow_worker_sg.id
+      ]
+      cidr_blocks = []
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-redis-sg"
+  }
+}
+
+module "airflow_efs_sg" {
+  source = "./modules/security-groups"
+  name   = "airflow-efs-sg"
+  vpc_id = module.vpc.vpc_id
+  ingress_rules = [
+    {
+      description = "NFS from Airflow components"
+      from_port   = 2049
+      to_port     = 2049
+      protocol    = "tcp"
+      security_groups = [
+        module.airflow_webserver_sg.id,
+        module.airflow_scheduler_sg.id,
+        module.airflow_worker_sg.id
+      ]
+      cidr_blocks = []
+    }
+  ]
+  egress_rules = [
+    {
+      description = "Allow all outbound traffic"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+  tags = {
+    Name = "airflow-efs-sg"
   }
 }
 
@@ -169,7 +378,7 @@ module "source_db" {
 # -----------------------------------------------------------------------------------------
 module "silver_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "silverbucketetletlpro"
+  bucket_name        = "silver-bucket-etl-${random_id.id.hex}"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -196,7 +405,7 @@ module "silver_bucket" {
 
 module "bronze_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "bronzebucketetletlpro"
+  bucket_name        = "bronze-bucket-etl-${random_id.id.hex}"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -223,7 +432,7 @@ module "bronze_bucket" {
 
 module "gold_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "bronzebucketetletlpro"
+  bucket_name        = "gold-bucket-etl-${random_id.id.hex}"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -355,7 +564,7 @@ module "airflow_metadata_db" {
     module.vpc.private_subnets[1],
     module.vpc.private_subnets[2]
   ]
-  vpc_security_group_ids                = [aws_security_group.airflow_rds_sg.id]
+  vpc_security_group_ids                = [module.airflow_rds_sg.id]
   publicly_accessible                   = false
   deletion_protection                   = false
   skip_final_snapshot                   = true
@@ -421,7 +630,7 @@ module "airflow_redis_cache" {
   ]
   description                = "Airflow Redis Cache Cluster"
   replication_group_id       = "airflow-redis"
-  vpc_security_group_ids     = [aws_security_group.airflow_redis_sg.id]
+  vpc_security_group_ids     = [module.airflow_redis_sg.id]
   maintenance_window         = "sun:05:00-sun:09:00"
   port                       = 6379
   automatic_failover_enabled = false
@@ -440,7 +649,7 @@ module "airflow_efs" {
     module.vpc.private_subnets[1],
     module.vpc.private_subnets[2]
   ]
-  security_group_ids   = [aws_security_group.airflow_efs_sg.id]
+  security_group_ids   = [module.airflow_efs_sg.id]
   backup_policy_status = "ENABLED"
   access_point_name    = "airflow-efs-access-point"
   posix_uid            = 50000
@@ -461,7 +670,7 @@ module "webserver_lb" {
   internal           = false
   load_balancer_type = "application"
   security_groups = [
-    aws_security_group.airflow_webserver_lb_sg.id
+    module.airflow_webserver_lb_sg.id
   ]
   subnets                          = module.vpc.public_subnets
   enable_deletion_protection       = false
@@ -570,10 +779,10 @@ module "ha_airflow_ecs_cluster" {
           environment = [
             { name = "AIRFLOW__CORE__EXECUTOR", value = "CeleryExecutor" },
             { name = "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", value = "postgresql+psycopg2://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
-            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${aws_elasticache_replication_group.airflow.configuration_endpoint_address}:6379/0" },
+            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${module.airflow_redis_cache.configuration_endpoint_address}:6379/0" },
             { name = "AIRFLOW__CELERY__RESULT_BACKEND", value = "db+postgresql://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
             { name = "AIRFLOW__LOGGING__REMOTE_LOGGING", value = "True" },
-            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${aws_s3_bucket.airflow_logs.id}" },
+            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${module.airflow_logs_bucket.id}" },
             { name = "AIRFLOW__WEBSERVER__BASE_URL", value = "https://${var.domain_name}" },
             { name = "AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX", value = "True" }
           ]
@@ -668,10 +877,10 @@ module "ha_airflow_ecs_cluster" {
           environment = [
             { name = "AIRFLOW__CORE__EXECUTOR", value = "CeleryExecutor" },
             { name = "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", value = "postgresql+psycopg2://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
-            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${aws_elasticache_replication_group.airflow.configuration_endpoint_address}:6379/0" },
+            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${module.airflow_redis_cache.configuration_endpoint_address}:6379/0" },
             { name = "AIRFLOW__CELERY__RESULT_BACKEND", value = "db+postgresql://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
             { name = "AIRFLOW__LOGGING__REMOTE_LOGGING", value = "True" },
-            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${aws_s3_bucket.airflow_logs.id}" },
+            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${module.airflow_logs_bucket.id}" },
             { name = "AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD", value = "30" }
           ]
           portMappings = [
@@ -765,10 +974,10 @@ module "ha_airflow_ecs_cluster" {
           environment = [
             { name = "AIRFLOW__CORE__EXECUTOR", value = "CeleryExecutor" },
             { name = "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", value = "postgresql+psycopg2://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
-            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${aws_elasticache_replication_group.airflow.configuration_endpoint_address}:6379/0" },
+            { name = "AIRFLOW__CELERY__BROKER_URL", value = "redis://:${tostring(data.vault_generic_secret.redis.data["auth_token"])}@${module.airflow_redis_cache.configuration_endpoint_address}:6379/0" },
             { name = "AIRFLOW__CELERY__RESULT_BACKEND", value = "db+postgresql://${tostring(data.vault_generic_secret.rds.data["username"])}:${tostring(data.vault_generic_secret.rds.data["password"])}@${module.airflow_metadata_db.endpoint}/airflow" },
             { name = "AIRFLOW__LOGGING__REMOTE_LOGGING", value = "True" },
-            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${aws_s3_bucket.airflow_logs.id}" },
+            { name = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER", value = "s3://${module.airflow_logs_bucket.id}" },
             { name = "AIRFLOW__CELERY__WORKER_CONCURRENCY", value = "16" }
           ]
           portMappings = [
@@ -811,7 +1020,7 @@ module "ha_airflow_ecs_cluster" {
 resource "aws_appautoscaling_target" "worker" {
   max_capacity       = 20
   min_capacity       = 3
-  resource_id        = "service/${aws_ecs_cluster.airflow.name}/${aws_ecs_service.worker.name}"
+  resource_id        = "service/${module.ha_airflow_ecs_cluster.clustername}/${aws_ecs_service.worker.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
 }
@@ -828,6 +1037,17 @@ resource "aws_appautoscaling_policy" "worker_scale_up" {
     }
     target_value = 70.0
   }
+}
+
+module "alarm_notifications" {
+  source     = "./modules/sns"
+  topic_name = "ha-airflow-cloudwatch-alarm-notification-topic"
+  subscriptions = [
+    {
+      protocol = "email"
+      endpoint = "madmaxcloudonline@gmail.com"
+    }
+  ]
 }
 
 module "rds_cpu" {
@@ -877,7 +1097,7 @@ module "redis_cpu" {
   alarm_description   = "Redis CPU utilization is too high"
   alarm_actions       = [module.alarm_notifications.arn]
   dimensions = {
-    CacheClusterId = aws_elasticache_replication_group.airflow.id
+    CacheClusterId = module.airflow_redis_cache.id
   }
 }
 
@@ -894,7 +1114,7 @@ module "scheduler_cpu" {
   alarm_description   = "Scheduler CPU utilization is too high"
   alarm_actions       = [module.alarm_notifications.arn]
   dimensions = {
-    ClusterName = aws_ecs_cluster.airflow.name
+    ClusterName = module.ha_airflow_ecs_cluster.cluster_name
     ServiceName = aws_ecs_service.scheduler.name
   }
 }
@@ -915,15 +1135,4 @@ module "alb_unhealthy_targets" {
     LoadBalancer = aws_lb.airflow.arn_suffix
     TargetGroup  = aws_lb_target_group.webserver.arn_suffix
   }
-}
-
-module "alarm_notifications" {
-  source     = "./modules/sns"
-  topic_name = "ha-airflow-cloudwatch-alarm-notification-topic"
-  subscriptions = [
-    {
-      protocol = "email"
-      endpoint = "madmaxcloudonline@gmail.com"
-    }
-  ]
 }
