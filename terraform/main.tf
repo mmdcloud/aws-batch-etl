@@ -342,24 +342,46 @@ module "db_credentials" {
 # -----------------------------------------------------------------------------------------
 # RDS Instance
 # -----------------------------------------------------------------------------------------
+resource "aws_iam_role" "rds_monitoring_role" {
+  name = "airflow-rds-monitoring-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "monitoring.rds.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  role       = aws_iam_role.rds_monitoring_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+}
+
 module "source_db" {
   source                  = "./modules/rds"
-  db_name                 = "cdcsourcedb"
+  db_name                 = "source-db"
   allocated_storage       = 100
   engine                  = "postgres"
   engine_version          = "17.2"
   instance_class          = "db.t4g.large"
   multi_az                = true
+  storage_encrypted       = true
+  storage_type            = "gp3"
   username                = tostring(data.vault_generic_secret.rds.data["username"])
   password                = tostring(data.vault_generic_secret.rds.data["password"])
-  subnet_group_name       = "cdc-rds-subnet-group"
+  subnet_group_name       = "rds-subnet-group"
   backup_retention_period = 7
   backup_window           = "03:00-06:00"
   maintenance_window      = "Mon:00:00-Mon:03:00"
   subnet_group_ids = [
-    module.vpc.public_subnets[0],
-    module.vpc.public_subnets[1],
-    module.vpc.public_subnets[2]
+    module.vpc.private_subnets[0],
+    module.vpc.private_subnets[1],
+    module.vpc.private_subnets[2]
   ]
   vpc_security_group_ids                = [module.rds_sg.id]
   publicly_accessible                   = true
@@ -368,7 +390,9 @@ module "source_db" {
   max_allocated_storage                 = 500
   performance_insights_enabled          = true
   performance_insights_retention_period = 7
-  parameter_group_name                  = "cdc-postgres17-params"
+  monitoring_interval                   = 60
+  monitoring_role_arn                   = aws_iam_role.rds_monitoring_role.arn
+  parameter_group_name                  = "postgres17-params"
   parameter_group_family                = "postgres17"
   parameters                            = []
 }
