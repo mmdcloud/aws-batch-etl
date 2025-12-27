@@ -293,38 +293,6 @@ module "airflow_redis_sg" {
   }
 }
 
-module "airflow_efs_sg" {
-  source = "./modules/security-groups"
-  name   = "airflow-efs-sg"
-  vpc_id = module.vpc.vpc_id
-  ingress_rules = [
-    {
-      description = "NFS from Airflow components"
-      from_port   = 2049
-      to_port     = 2049
-      protocol    = "tcp"
-      security_groups = [
-        module.airflow_webserver_sg.id,
-        module.airflow_scheduler_sg.id,
-        module.airflow_worker_sg.id
-      ]
-      cidr_blocks = []
-    }
-  ]
-  egress_rules = [
-    {
-      description = "Allow all outbound traffic"
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-  tags = {
-    Name = "airflow-efs-sg"
-  }
-}
-
 # -----------------------------------------------------------------------------------------
 # Secrets Manager
 # -----------------------------------------------------------------------------------------
@@ -658,34 +626,6 @@ module "airflow_redis_cache" {
   maintenance_window         = "sun:05:00-sun:09:00"
   port                       = 6379
   automatic_failover_enabled = false
-}
-
-module "airflow_efs" {
-  source           = "./modules/efs"
-  name             = "airflow-dags-efs"
-  creation_token   = "airflow-dags-efs"
-  encrypted        = true
-  performance_mode = "generalPurpose"
-  throughput_mode  = "bursting"
-  transition_to_ia = "AFTER_30_DAYS"
-  subnet_ids = [
-    module.vpc.private_subnets[0],
-    module.vpc.private_subnets[1],
-    module.vpc.private_subnets[2]
-  ]
-  security_group_ids   = [module.airflow_efs_sg.id]
-  backup_policy_status = "ENABLED"
-  access_point_name    = "airflow-efs-access-point"
-  posix_uid            = 50000
-  posix_gid            = 50000
-  root_path            = "/airflow"
-  root_permissions     = "755"
-  tags = {
-    Name        = "airflow-dags-efs"
-    Environment = "prod"
-    Project     = "airflow"
-    ManagedBy   = "terraform"
-  }
 }
 
 module "webserver_lb" {
@@ -1041,28 +981,32 @@ module "ha_airflow_ecs_cluster" {
   }
 }
 
-resource "aws_appautoscaling_target" "worker" {
-  max_capacity       = 20
-  min_capacity       = 3
-  resource_id        = "service/${module.ha_airflow_ecs_cluster.clustername}/${aws_ecs_service.worker.name}"
-  scalable_dimension = "ecs:service:DesiredCount"
-  service_namespace  = "ecs"
-}
-
-resource "aws_appautoscaling_policy" "worker_scale_up" {
-  name               = "worker-scale-up"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.worker.resource_id
-  scalable_dimension = aws_appautoscaling_target.worker.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.worker.service_namespace
-  target_tracking_scaling_policy_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+# -----------------------------------------------------------------------------------------
+# Auto Scaling Configuration
+# -----------------------------------------------------------------------------------------
+module "worker_auto_scaling" {
+  source                   = "./modules/autoscaling"
+  service_namespace        = "ecs"
+  resource_id              = "service/${module.ha_airflow_ecs_cluster.cluster_name}/${aws_ecs_service.worker.name}"
+  scalable_dimension       = "ecs:service:DesiredCount"
+  min_capacity             = 3
+  max_capacity             = 20
+  policies = {
+    name = "worker-scale-up"
+    policy_type = "TargetTrackingScaling"
+    target_tracking_scaling_policy_configuration = {
+      predefined_metric_specification = {
+        predefined_metric_type = "ECSServiceAverageCPUUtilization"
+      }
+      target_value = 70.0
     }
-    target_value = 70.0
   }
+  
 }
 
+# -----------------------------------------------------------------------------------------
+# SNS Configuration
+# -----------------------------------------------------------------------------------------
 module "alarm_notifications" {
   source     = "./modules/sns"
   topic_name = "ha-airflow-cloudwatch-alarm-notification-topic"
@@ -1074,6 +1018,9 @@ module "alarm_notifications" {
   ]
 }
 
+# -----------------------------------------------------------------------------------------
+# Cloudwatch Alarms
+# -----------------------------------------------------------------------------------------
 module "rds_cpu" {
   source              = "./modules/cloudwatch/cloudwatch-alarm"
   alarm_name          = "airflow-rds-high-cpu"
@@ -1156,7 +1103,7 @@ module "alb_unhealthy_targets" {
   alarm_description   = "Unhealthy targets detected in ALB"
   alarm_actions       = [module.alarm_notifications.arn]
   dimensions = {
-    LoadBalancer = aws_lb.airflow.arn_suffix
-    TargetGroup  = aws_lb_target_group.webserver.arn_suffix
+    LoadBalancer = module.webserver_lb.lb_arn_suffix
+    TargetGroup  = module.webserver_lb.target_group_arn_suffix
   }
 }
